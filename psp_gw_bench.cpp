@@ -40,17 +40,15 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 	sessions.reserve(loops);
 
 	struct psp_session_t session = {
-		.dst_mac = {0x11, 0x12, 0x13, 0x14, 0x15, 0x16},
+		.dst_mac = {{0x11, 0x12, 0x13, 0x14, 0x15, 0x16}},
 		.dst_pip =
 			{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f},
 		.dst_vip = 0x0,
 		.spi = 0x0,
 		.crypto_id = 0x1,
 		.vc = 0x0,
-		.encrypt_entry = nullptr,
 	};
 	uint32_t encrypt_key[256 / 32] = {};
-	bool vc_enabled = true;
 
 	doca_error_t result = DOCA_SUCCESS;
 
@@ -130,7 +128,7 @@ static doca_error_t execute_tx_key_gen_loop(size_t bsize,
 	uint32_t key_buffer[256 / 32];
 	uint32_t spi;
 
-	for (int i = 0; i < loops && !force_quit; i++) {
+	for (size_t i = 0; i < loops && !force_quit; i++) {
 		result = doca_flow_crypto_psp_spi_key_bulk_generate(spi_key_bulk);
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("Failed to generate bulk of size %ld: %s", bsize, doca_error_get_descr(result));

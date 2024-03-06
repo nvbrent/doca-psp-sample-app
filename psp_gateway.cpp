@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
  *
  * This software product is a proprietary product of NVIDIA CORPORATION &
  * AFFILIATES (the "Company") and all right, title, and interest in and to the
@@ -10,35 +10,6 @@
  * provided with the software product.
  *
  */
-
-//
-// Pipeline Design:
-//
-// Ingress:
-//
-// [Uplink] --> [decrypt_pipe] --> [syndrome_pipe] --> [VF]
-//
-// decrypt_pipe:
-// - match: port_meta, tun
-// - actions: decrypt, decap
-// - mon: count (+miss_counter)
-// - fwd: syndrome_pipe, miss_fwd: [default]
-//
-// syndrome_pipe:
-// - match: psp_syndrome
-// - mon: count (+miss_counter)
-// - fwd: VF, miss_fwd: drop
-//
-// Egress:
-//
-// [VF] --> [encrypt_pipe] --> [Uplink]
-//
-// encrypt_pipe:
-// - match: ipv4.dst
-// - actions: encap, encrypt
-// - mon: count (+miss_counter)
-// - fwd: uplink, miss_fwd: [default]
-//
 
 // system headers
 #include <signal.h>
@@ -147,7 +118,7 @@ static doca_error_t open_doca_device_with_pci(const char *pci_addr, tasks_check 
 int main(int argc, char **argv)
 {
 	doca_error_t result;
-	int ret, nb_ports = 2;
+	int nb_ports = 2;
 	int exit_status = EXIT_SUCCESS;
 
 	struct psp_gw_app_config app_config = {
@@ -178,9 +149,8 @@ int main(int argc, char **argv)
 
 	struct psp_pf_dev pf_dev = {};
 	uint16_t vf_port_id;
-
-	const char *eal_param[] = {"", "-a", "00:00.0", "-l", "0-1"};
 	std::string dev_probe_str;
+
 	struct doca_log_backend *sdk_log;
 
 	// Register a logger backend
@@ -200,31 +170,9 @@ int main(int argc, char **argv)
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 
-	// Init ARGP interface and start parsing cmdline/json arguments
-	result = doca_argp_init("doca_psp_gateway", &app_config);
+	result = psp_gw_argp_exec(argc, argv, &app_config);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to init ARGP resources: %s", doca_error_get_descr(result));
 		return EXIT_FAILURE;
-	}
-
-	result = psp_gw_register_params();
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register ARGP parameters: %s", doca_error_get_descr(result));
-		return EXIT_FAILURE;
-	}
-
-	result = doca_argp_start(argc, argv);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to parse application input: %s", doca_error_get_descr(result));
-		doca_argp_destroy();
-		return EXIT_FAILURE;
-	}
-
-	ret = rte_eal_init(sizeof(eal_param) / sizeof(eal_param[0]), const_cast<char **>(eal_param));
-	if (ret < 0) {
-		DOCA_LOG_ERR("EAL initialization failed");
-		exit_status = EXIT_FAILURE;
-		goto argp_destroy;
 	}
 
 	// init devices
@@ -241,9 +189,8 @@ int main(int argc, char **argv)
 				    "dv_xmeta_en=4,"	 // extended flow metadata support
 				    "fdb_def_rule_en=0," // disable default root flow table rule
 				    "vport_match=1,"
-				    "repr_matching_en=0,"
-				    "representor=vf") + // indicate which representors to probe
-			app_config.pf_repr_indices;
+				    "repr_matching_en=0,") +
+			app_config.pf_repr_indices; // indicate which representors to probe
 
 	result = doca_dpdk_port_probe(pf_dev.dev, dev_probe_str.c_str());
 	if (result != DOCA_SUCCESS) {
@@ -252,13 +199,7 @@ int main(int argc, char **argv)
 	}
 	DOCA_LOG_INFO("Probed %s,%s", app_config.pf_pcie_addr.c_str(), dev_probe_str.c_str());
 
-#if 0
-	// Note this fails to obtain port_id 0 because of the use
-	// of unordered_map in doca_dpdk.cpp
-	doca_dpdk_get_first_port_id(pf_dev.dev, &pf_dev.port_id);
-#else
 	pf_dev.port_id = 0;
-#endif
 
 	app_config.dpdk_config.port_config.nb_ports = rte_eth_dev_count_avail();
 
@@ -306,6 +247,7 @@ int main(int argc, char **argv)
 
 		if (app_config.run_benchmarks_and_exit) {
 			psp_gw_run_benchmarks(&psp_flows);
+
 		} else {
 			PSP_GatewayImpl psp_svc(&app_config, &psp_flows);
 
@@ -335,8 +277,20 @@ int main(int argc, char **argv)
 			auto server_instance = builder.BuildAndStart();
 			std::cout << "Server listening on " << server_address << std::endl;
 
+			// If configured to create all tunnels at startup, create a list of
+			// pending tunnels here. Each invocation of try_connect will
+			// remove entries from the list as tunnels are created.
+			// Otherwise, this list will be left empty and tunnels will be created
+			// on demand via the miss path.
+			std::vector<psp_gw_host> remotes_to_connect;
+			if (app_config.create_tunnels_at_startup) {
+				remotes_to_connect = app_config.net_config.hosts;
+			}
+
 			while (!force_quit) {
+				psp_svc.try_connect(remotes_to_connect);
 				sleep(1);
+
 				psp_flows.show_static_flow_counts();
 				psp_svc.show_flow_counts();
 			}
@@ -359,9 +313,6 @@ int main(int argc, char **argv)
 
 dpdk_destroy:
 	dpdk_fini();
-
-argp_destroy:
-	// ARGP cleanup
 	doca_argp_destroy();
 
 	return exit_status;

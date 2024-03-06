@@ -38,11 +38,8 @@ typedef uint8_t ipv6_addr_t[IPV6_ADDR_LEN];
  * could be extended to a list of PFs.
  */
 struct psp_gw_host {
-	rte_ether_addr mac; //!< MAC address of the host PF device
-	ipv6_addr_t pip;    //!< physical IP address, one per host PF
-	doca_be32_t vip;    //!< virtual IP address, one per host PF
-
-	doca_be32_t svc_ip; //!< control plane gRPC service address
+	doca_be32_t vip;    /*!< virtual IP address, one per host PF */
+	doca_be32_t svc_ip; /*!< control plane gRPC service address */
 };
 
 /**
@@ -87,10 +84,11 @@ struct psp_gw_app_config {
 
 	uint32_t sample_meta_indicator;
 
-	bool show_rss_rx_packets;     //!< Display to the console any packets received via RSS
-	bool show_rss_durations;      //!< Display performance information for RSS processing
-	bool debug_keys;	      //!< Print the contents of PSP encryption keys to the console
-	bool run_benchmarks_and_exit; //!< Run PSP performance benchmarks; do not run the gRPC service.
+	bool create_tunnels_at_startup; //!< Create PSP tunnels at startup vs. on demand
+	bool show_rss_rx_packets;	//!< Display to the console any packets received via RSS
+	bool show_rss_durations;	//!< Display performance information for RSS processing
+	bool debug_keys;		//!< Print the contents of PSP encryption keys to the console
+	bool run_benchmarks_and_exit;	//!< Run PSP performance benchmarks; do not run the gRPC service.
 };
 
 #endif // _PSP_GW_CONFIG_H_

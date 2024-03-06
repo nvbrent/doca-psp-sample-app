@@ -39,23 +39,27 @@ PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *ps
 
 doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 {
+	if (config->create_tunnels_at_startup)
+		return DOCA_SUCCESS; // no action; tunnels to be created by the main loop
+
 	const auto *eth_hdr = rte_pktmbuf_mtod(packet, struct rte_ether_hdr *);
-	if (eth_hdr->ether_type != RTE_BE16(RTE_ETHER_TYPE_IPV4)) {
+	if (eth_hdr->ether_type != RTE_BE16(RTE_ETHER_TYPE_IPV4))
 		return DOCA_SUCCESS; // no action
-	}
+
 	const auto *ipv4_hdr = rte_pktmbuf_mtod_offset(packet, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
 
 	std::string dst_vip = ipv4_to_string(ipv4_hdr->dst_addr);
 
-	auto *remote_host = lookup_remote_host(ipv4_hdr->dst_addr);
-	if (!remote_host) {
-		DOCA_LOG_WARN("Virtual Destination IP Addr not found: %s", dst_vip.c_str());
-		return DOCA_ERROR_NOT_FOUND;
-	}
-
 	// Create the new tunnel instance, if one does not already exist
 	if (sessions.count(dst_vip) == 0) {
-		doca_error_t result = request_tunnel_to_host(remote_host, ipv4_hdr->src_addr);
+		// Determine the peer which owns the virtual destination
+		auto *remote_host = lookup_remote_host(ipv4_hdr->dst_addr);
+		if (!remote_host) {
+			DOCA_LOG_WARN("Virtual Destination IP Addr not found: %s", dst_vip.c_str());
+			return DOCA_ERROR_NOT_FOUND;
+		}
+
+		doca_error_t result = request_tunnel_to_host(remote_host, ipv4_hdr->src_addr, false);
 		if (result != DOCA_SUCCESS) {
 			return result;
 		}
@@ -74,7 +78,9 @@ doca_error_t PSP_GatewayImpl::handle_miss_packet(struct rte_mbuf *packet)
 	return DOCA_SUCCESS;
 }
 
-doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_host, doca_be32_t local_virt_ip)
+doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_host,
+						     doca_be32_t local_virt_ip,
+						     bool suppress_failure_msg)
 {
 	std::string remote_host_svc_pip = ipv4_to_string(remote_host->svc_ip);
 	std::string remote_host_vip = ipv4_to_string(remote_host->vip);
@@ -89,19 +95,24 @@ doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_
 	request.set_virt_src_ip(local_vip);
 	request.set_virt_dst_ip(remote_host_vip);
 
-	// Save a round-trip
-	doca_error_t result = generate_tunnel_params(request.mutable_reverse_params());
-	if (result != DOCA_SUCCESS) {
-		return result;
+	// Save a round-trip, if a local virtual IP was given.
+	// Otherwise, expect the remote host to send a separate request.
+	if (local_virt_ip) {
+		doca_error_t result = generate_tunnel_params(request.mutable_reverse_params());
+		if (result != DOCA_SUCCESS) {
+			return result;
+		}
 	}
 
 	::psp_gateway::NewTunnelResponse response;
 	::grpc::Status status = stub->RequestTunnelParams(&context, request, &response);
 
 	if (!status.ok()) {
-		DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s",
-			     remote_host_svc_pip.c_str(),
-			     status.error_message().c_str());
+		if (!suppress_failure_msg) {
+			DOCA_LOG_ERR("Request for new SPI/Key to remote host %s failed: %s",
+				     remote_host_svc_pip.c_str(),
+				     status.error_message().c_str());
+		}
 		return DOCA_ERROR_IO_FAILED;
 	}
 
@@ -133,13 +144,13 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 
 	psp_session_t &session = sessions[remote_host_vip];
 	session = (struct psp_session_t){
-		.dst_mac = remote_host->mac,
 		.dst_vip = remote_host->vip,
 		.spi = params.spi(),
 		.crypto_id = crypto_id,
 		.vc = params.virt_cookie(),
 	};
-	memcpy(session.dst_pip, remote_host->pip, IPV6_ADDR_LEN);
+	rte_ether_unformat_addr(params.mac_addr().c_str(), &session.dst_mac);
+	inet_pton(AF_INET6, params.ip_addr().c_str(), session.dst_pip);
 
 	DOCA_LOG_INFO("Received tunnel params from %s, SPI %d", remote_host_svc_ip.c_str(), session.spi);
 	debug_key(encrypt_key, params.encryption_key().size());
@@ -192,10 +203,7 @@ int PSP_GatewayImpl::is_version_supported(const ::psp_gateway::NewTunnelRequest 
 
 	if (request->has_reverse_params()) {
 		struct psp_gw_host remote_host = {};
-		const auto &rev_params = request->reverse_params();
 
-		rte_ether_unformat_addr(rev_params.mac_addr().c_str(), &remote_host.mac);
-		inet_pton(AF_INET6, rev_params.ip_addr().c_str(), &remote_host.pip);
 		inet_pton(AF_INET, request->virt_src_ip().c_str(), &remote_host.vip);
 		// remote_host.svc_ip not used
 
@@ -250,6 +258,21 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(psp_gateway::TunnelParamete
 	return DOCA_SUCCESS;
 }
 
+size_t PSP_GatewayImpl::try_connect(std::vector<psp_gw_host> &hosts)
+{
+	size_t num_connected = 0;
+	for (auto host_iter = hosts.begin(); host_iter != hosts.end(); /* increment below */) {
+		doca_error_t result = request_tunnel_to_host(&*host_iter, 0x0, true);
+		if (result == DOCA_SUCCESS) {
+			++num_connected;
+			host_iter = hosts.erase(host_iter);
+		} else {
+			++host_iter;
+		}
+	}
+	return num_connected;
+}
+
 psp_gw_host *PSP_GatewayImpl::lookup_remote_host(rte_be32_t dst_vip)
 {
 	for (auto &host : config->net_config.hosts) {
@@ -266,17 +289,6 @@ doca_error_t PSP_GatewayImpl::show_flow_counts(void)
 		psp_flows->show_session_flow_count(session.first, session.second);
 	}
 	return DOCA_SUCCESS;
-}
-
-::grpc::Status PSP_GatewayImpl::NotifyMasterKeyRotated(::grpc::ServerContext *context,
-						       const ::psp_gateway::NewMasterKeyRequest *request,
-						       ::psp_gateway::NewMasterKeyResponse *response)
-{
-	response->set_request_id(request->request_id());
-
-	// create new tunnel parameters for all tunnels to this host
-
-	return ::grpc::Status(::grpc::UNIMPLEMENTED, "UNIMPLEMENTED");
 }
 
 uint32_t PSP_GatewayImpl::next_crypto_id(void)

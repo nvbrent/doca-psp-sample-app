@@ -24,6 +24,8 @@
 
 #include "psp_gw_config.h"
 
+static const int NUM_OF_PSP_SYNDROMES = 4; // None, ICV Fail, Bad Trailer
+
 struct psp_gw_app_config;
 
 /**
@@ -229,42 +231,51 @@ private:
 	doca_error_t ingress_decrypt_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the pipe to sample packets with the PSP.S bit set
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t ingress_sampling_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the pipe to only accept incoming packets from
+	 * appropriate sources.
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t ingress_acl_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the pipe which counts the various syndrome types
+	 * and drops the packets
+	 *
+	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+	 */
+	doca_error_t syndrome_stats_pipe_create(void);
+
+	/**
+	 * Creates the pipe to trap outgoing packets to unregistered destinations
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t egress_acl_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the pipe to mark and randomly sample outgoing packets
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t egress_sampling_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the encryption pipe
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
 	doca_error_t egress_encrypt_pipe_create(void);
 
 	/**
-	 * Top-level pipe creation method
+	 * Creates the entry point to the CPU Rx queues
 	 *
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
@@ -303,6 +314,7 @@ private:
 	doca_flow_pipe *egress_acl_pipe{};
 	doca_flow_pipe *egress_sampling_pipe{};
 	doca_flow_pipe *egress_encrypt_pipe{};
+	doca_flow_pipe *syndrome_stats_pipe{};
 
 	// static pipe entries
 	doca_flow_pipe_entry *default_rss_entry{};
@@ -310,6 +322,8 @@ private:
 	doca_flow_pipe_entry *default_ingr_sampling_entry{};
 	doca_flow_pipe_entry *default_ingr_acl_entry{};
 	doca_flow_pipe_entry *default_egr_sampling_entry{};
+	doca_flow_pipe_entry *vf_arp_to_rss{};
+	doca_flow_pipe_entry *syndrome_stats_entries[NUM_OF_PSP_SYNDROMES]{};
 
 	// Shared resource IDs
 	uint32_t ingress_mirror_id{};

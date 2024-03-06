@@ -28,7 +28,6 @@
 
 DOCA_LOG_REGISTER(PSP_GATEWAY);
 
-static const int NUM_OF_PSP_SYNDROMES = 3;	  // None, ICV Fail, Bad Trailer
 static const uint32_t DEFAULT_TIMEOUT_US = 10000; /* default timeout for processing entries */
 static const uint32_t PSP_ICV_SIZE = 16;
 static const uint32_t DUMMY_CRYPTO_ID = 1; // for pipe creation
@@ -254,6 +253,11 @@ doca_error_t PSP_GatewayFlows::create_pipes(void)
 {
 	doca_error_t result;
 
+	result = syndrome_stats_pipe_create();
+	if (result != DOCA_SUCCESS) {
+		return result;
+	}
+
 	result = ingress_acl_pipe_create();
 	if (result != DOCA_SUCCESS) {
 		return result;
@@ -313,12 +317,11 @@ doca_error_t PSP_GatewayFlows::rss_pipe_create(void)
 
 	// Note packets sent to RSS will be processed by lcore_pkt_proc_func().
 	uint16_t rss_queues[1] = {0};
-	doca_flow_fwd fwd_rss = {
-		.type = DOCA_FLOW_FWD_RSS,
-		.rss_outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6,
-		.rss_queues = rss_queues,
-		.num_of_queues = 1,
-	};
+	doca_flow_fwd fwd_rss = {};
+	fwd_rss.type = DOCA_FLOW_FWD_RSS;
+	fwd_rss.rss_outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6;
+	fwd_rss.rss_queues = rss_queues;
+	fwd_rss.num_of_queues = 1;
 	result = doca_flow_pipe_create(&rss_pipe_cfg, &fwd_rss, NULL, &rss_pipe);
 	if (result != DOCA_SUCCESS) {
 		rte_exit(EXIT_FAILURE, "Failed to create RSS pipe: %d (%s)\n", result, doca_error_get_descr(result));
@@ -380,6 +383,9 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 		.type = DOCA_FLOW_FWD_PIPE,
 		.next_pipe = ingress_sampling_pipe,
 	};
+	doca_flow_fwd fwd_miss = {
+		.type = DOCA_FLOW_FWD_DROP,
+	};
 
 	doca_flow_pipe_cfg cfg = {
 		.attr =
@@ -398,7 +404,7 @@ doca_error_t PSP_GatewayFlows::ingress_decrypt_pipe_create(void)
 		.monitor = &monitor_count,
 	};
 
-	doca_error_t result = doca_flow_pipe_create(&cfg, &fwd, NULL, &ingress_decrypt_pipe);
+	doca_error_t result = doca_flow_pipe_create(&cfg, &fwd, &fwd_miss, &ingress_decrypt_pipe);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to create %s pipe: %s", cfg.attr.name, doca_error_get_descr(result));
 		return result;
@@ -459,6 +465,14 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 	};
 	doca_flow_actions *actions_arr[] = {&set_meta};
 
+	doca_flow_actions set_meta_mask = {
+		.meta =
+			{
+				.pkt_meta = UINT32_MAX,
+			},
+	};
+	doca_flow_actions *actions_masks_arr[] = {&set_meta_mask};
+
 	doca_flow_fwd fwd_and_miss = {
 		.type = DOCA_FLOW_FWD_PIPE,
 		.next_pipe = ingress_acl_pipe,
@@ -477,6 +491,7 @@ doca_error_t PSP_GatewayFlows::ingress_sampling_pipe_create(void)
 		.match = &match_psp_sampling_bit,
 		.match_mask = &match_psp_sampling_bit,
 		.actions = actions_arr,
+		.actions_masks = actions_masks_arr,
 		.monitor = &mirror_action,
 	};
 
@@ -540,7 +555,8 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	};
 
 	struct doca_flow_fwd fwd_miss = {
-		.type = DOCA_FLOW_FWD_DROP,
+		.type = DOCA_FLOW_FWD_PIPE,
+		.next_pipe = syndrome_stats_pipe,
 	};
 
 	struct doca_flow_pipe_cfg cfg = {
@@ -582,6 +598,57 @@ doca_error_t PSP_GatewayFlows::ingress_acl_pipe_create(void)
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to add default entry to %s pipe: %s", cfg.attr.name, doca_error_get_descr(result));
 		return result;
+	}
+
+	return DOCA_SUCCESS;
+}
+
+doca_error_t PSP_GatewayFlows::syndrome_stats_pipe_create(void)
+{
+	doca_error_t result;
+
+	doca_flow_match syndrome_match = {
+		.parser_meta =
+			{
+				.psp_syndrome = 0xff,
+			},
+	};
+	// If we got here, the packet failed either the PSP decryption syndrome check
+	// or the ACL check. Whether the syndrome bits match here or not, the
+	// fate of the packet is to drop.
+	doca_flow_fwd fwd_drop = {
+		.type = DOCA_FLOW_FWD_DROP,
+	};
+	doca_flow_pipe_cfg cfg = {
+		.attr =
+			{
+				.name = "SYNDROME_STATS",
+				.domain = DOCA_FLOW_PIPE_DOMAIN_SECURE_INGRESS,
+				.nb_flows = NUM_OF_PSP_SYNDROMES,
+				.dir_info = DOCA_FLOW_DIRECTION_NETWORK_TO_HOST,
+				.miss_counter = true,
+			},
+		.port = pf_dev->port_obj,
+		.match = &syndrome_match,
+		.monitor = &monitor_count,
+	};
+
+	result = doca_flow_pipe_create(&cfg, &fwd_drop, &fwd_drop, &syndrome_stats_pipe);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to create %s pipe: %s", cfg.attr.name, doca_error_get_descr(result));
+		return result;
+	}
+
+	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
+		syndrome_match.parser_meta.psp_syndrome = 1 << i;
+		add_single_entry(0,
+				 syndrome_stats_pipe,
+				 pf_dev->port_obj,
+				 &syndrome_match,
+				 NULL,
+				 &monitor_count,
+				 NULL,
+				 &syndrome_stats_entries[i]);
 	}
 
 	return DOCA_SUCCESS;
@@ -696,7 +763,6 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(struct psp_session_t *session, 
 	struct doca_flow_match encap_match = {
 		.parser_meta =
 			{
-				.port_meta = 1,
 				.outer_l3_type = DOCA_FLOW_L3_META_IPV4,
 			},
 		.outer =
@@ -746,10 +812,6 @@ doca_error_t PSP_GatewayFlows::add_encrypt_entry(struct psp_session_t *session, 
 		.meta =
 			{
 				.pkt_meta = session->crypto_id,
-			},
-		.tun =
-			{
-				.type = DOCA_FLOW_TUN_PSP,
 			},
 	};
 	struct doca_flow_actions encrypt_actions = {
@@ -872,10 +934,6 @@ doca_error_t PSP_GatewayFlows::egress_sampling_pipe_create(void)
 							.random = 0x1,
 						}};
 
-	doca_flow_monitor mirror_action = {
-		.shared_mirror_id = egress_mirror_id,
-	};
-
 	doca_flow_actions set_sample_bit = {
 		.tun =
 			{
@@ -973,6 +1031,7 @@ doca_error_t PSP_GatewayFlows::egress_encrypt_pipe_create(void)
 			},
 		.port = pf_dev->port_obj,
 		.match = &match,
+		.match_mask = &match,
 		.actions = actions_arr,
 		.monitor = &monitor_count,
 	};
@@ -1015,6 +1074,9 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 		.parser_meta =
 			{
 				.port_meta = UINT32_MAX,
+				.outer_l3_ok = UINT8_MAX,
+				.outer_ip4_checksum_ok = UINT8_MAX,
+				.outer_l4_ok = UINT8_MAX,
 			},
 		.outer =
 			{
@@ -1027,6 +1089,9 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 	doca_flow_match ipv6_from_uplink = {.parser_meta =
 						    {
 							    .port_meta = pf_dev->port_id,
+							    .outer_l3_ok = true,
+							    .outer_ip4_checksum_ok = false,
+							    .outer_l4_ok = true,
 						    },
 					    .outer = {
 						    .eth =
@@ -1038,6 +1103,9 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 	doca_flow_match ipv4_from_vf = {.parser_meta =
 						{
 							.port_meta = vf_port_id,
+							.outer_l3_ok = true,
+							.outer_ip4_checksum_ok = true,
+							.outer_l4_ok = true,
 						},
 					.outer = {
 						.eth =
@@ -1046,6 +1114,19 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 							},
 					}};
 
+	doca_flow_match arp_mask = {
+		.parser_meta =
+			{
+				.port_meta = UINT32_MAX,
+			},
+		.outer =
+			{
+				.eth =
+					{
+						.type = UINT16_MAX,
+					},
+			},
+	};
 	doca_flow_match arp_from_vf = {.parser_meta =
 					       {
 						       .port_meta = vf_port_id,
@@ -1113,15 +1194,15 @@ doca_error_t PSP_GatewayFlows::ingress_root_pipe_create(void)
 						  3,
 						  ingress_root_pipe,
 						  &arp_from_vf,
-						  &mask,
+						  &arp_mask,
 						  nullptr,
 						  nullptr,
 						  nullptr,
 						  nullptr,
-						  nullptr,
+						  &monitor_count,
 						  &fwd_rss,
 						  nullptr,
-						  &entry);
+						  &vf_arp_to_rss);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to create root pipe entry: %s", doca_error_get_descr(result));
 		return result;
@@ -1206,9 +1287,17 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 		{default_ingr_sampling_entry, "IngrSampl"},
 		{default_ingr_acl_entry, "ACL/Syndr"},
 		{default_egr_sampling_entry, "EgrSampl"},
+		//{vf_arp_to_rss, "VF ARP"},
 	};
+	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
+		entries.push_back(std::make_pair(syndrome_stats_entries[i], "syndrome[" + std::to_string(i) + "]"));
+	}
+
 	std::vector<std::pair<doca_flow_pipe *, std::string>> pipes_with_miss_counter{
-		//{ ingress_decrypt_pipe, "ingress_decrypt_pipe", },
+		{
+			ingress_decrypt_pipe,
+			"ingress_decrypt_pipe",
+		},
 		{
 			ingress_sampling_pipe,
 			"ingress_sampling_pipe",

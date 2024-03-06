@@ -66,15 +66,6 @@ public:
 					   ::psp_gateway::NewTunnelResponse *response) override;
 
 	/**
-	 * @brief  Indicates that the initiator has nearly exhuasted the range
-	 * or time window of its master key, and all peers should call
-	 * RequestTunnelParams() to create new tunnels. (deprecated)
-	 */
-	::grpc::Status NotifyMasterKeyRotated(::grpc::ServerContext *context,
-					      const ::psp_gateway::NewMasterKeyRequest *request,
-					      ::psp_gateway::NewMasterKeyResponse *response) override;
-
-	/**
 	 * @brief Handles any "miss" packets recieved by RSS which indicate
 	 *        a new tunnel connection is needed.
 	 *
@@ -91,6 +82,16 @@ public:
 	 */
 	doca_error_t show_flow_counts(void);
 
+	/**
+	 * @brief Attempt to establish tunnels to each of the passed hosts.
+	 * On success, a given host is removed from the list so that this
+	 * method can be called repeatedly with the same list.
+	 *
+	 * @hosts [in/out]: the list of tunnels to try to establish
+	 * @return: the number of hosts successfully connected and removed from 'hosts'
+	 */
+	size_t try_connect(std::vector<psp_gw_host> &hosts);
+
 private:
 	/**
 	 * @brief Sends a request to the given remote host
@@ -99,9 +100,13 @@ private:
 	 *
 	 * @remote_host [in]: The remote host to which we will create a tunnel
 	 * @local_virt_ip [in]: The destination virtual IP address for the return traffic
+	 * @suppress_failure_msg [in]: Indicates we are okay with a failure to connect, such
+	 * as during application startup.
 	 * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
 	 */
-	doca_error_t request_tunnel_to_host(struct psp_gw_host *remote_host, doca_be32_t local_virt_ip);
+	doca_error_t request_tunnel_to_host(struct psp_gw_host *remote_host,
+					    doca_be32_t local_virt_ip,
+					    bool suppress_failure_msg);
 
 	/**
 	 * @brief Creates the flow entries for a given session

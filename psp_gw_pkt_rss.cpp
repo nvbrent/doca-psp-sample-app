@@ -40,7 +40,12 @@ static uint16_t max_tx_retries = 10;
  */
 static void handle_packet(struct lcore_params *params, uint16_t port_id, uint16_t queue_id, struct rte_mbuf *packet)
 {
-	if (params->config->show_rss_rx_packets) {
+	uint32_t pkt_meta = rte_flow_dynf_metadata_get(packet);
+	if (pkt_meta == params->config->sample_meta_indicator) {
+		printf("SAMPLED PACKET: port %d, queue_id %d, pkt_meta 0x%x\n", port_id, queue_id, pkt_meta);
+		rte_pktmbuf_dump(stdout, packet, packet->data_len);
+	} else if (params->config->show_rss_rx_packets) {
+		printf("RSS: Received port %d, queue_id %d, pkt_meta 0x%x\n", port_id, queue_id, pkt_meta);
 		rte_pktmbuf_dump(stdout, packet, packet->data_len);
 	}
 

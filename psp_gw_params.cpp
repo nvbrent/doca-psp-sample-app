@@ -21,83 +21,29 @@
 
 DOCA_LOG_REGISTER(PSP_Gateway_Params);
 
-/**
- * @brief Specifies the PF to be used by the host
- *
- * @param [in]: A string of the form DDDD:BB:DD.F describing the PCI DBDF
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_pci_addr_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	const char *pci_addr = (const char *)param;
-
-	int pci_addr_len = strlen(pci_addr);
-	if (pci_addr_len + 1 != DOCA_DEVINFO_PCI_ADDR_SIZE && pci_addr_len + 1 != DOCA_DEVINFO_PCI_BDF_SIZE) {
-		DOCA_LOG_ERR("Expected PCI addr in DDDD:BB:DD.F or BB:DD.F format");
-		return DOCA_ERROR_INVALID_VALUE;
-	}
-
-	app_config->pf_pcie_addr = pci_addr;
-	for (char &c : app_config->pf_pcie_addr) {
-		c = tolower(c);
-	}
-
-	DOCA_LOG_INFO("Using %s for PF PCIe Addr", app_config->pf_pcie_addr.c_str());
-	return DOCA_SUCCESS;
-}
-
-/**
- * @brief Indicates which representor[s] of the PF should be probed
- *
- * @param [in]: A string of the form xf#, where:
- *              # is a number, or a range in square brackets
- *              xf is one of: vf, sf, pf (optional)
- * @config [in/out]: A void pointer to the application config struct
- * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
- */
-static doca_error_t handle_repr_param(void *param, void *config)
-{
-	auto *app_config = (struct psp_gw_app_config *)config;
-	app_config->pf_repr_indices = (const char *)param;
-	return DOCA_SUCCESS;
-}
+using dev_pci_addr_devarg = std::pair<std::string, std::string>;
 
 /**
  * @brief Parses a tunnel specifier for a remote host
  *
  * @fields [in]: A comma-separated string containing the following:
  * - rpc_ipv4_addr
- * - mac_addr
- * - outer_ipv6_addr
- * - inner_ipv4_addr
+ * - virt_ipv4_addr
  * @host [out]: The host data structure to populate
  * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
  */
 static bool parse_host_param(char *fields, struct psp_gw_host *host)
 {
 	char *svcaddr = strtok_r(fields, ",", &fields);
-	char *macaddr = strtok_r(fields, ",", &fields);
-	char *phys_ip = strtok_r(fields, ",", &fields);
 	char *virt_ip = strtok_r(fields, ",", &fields);
 	char *extra_field_check = strtok_r(fields, ",", &fields); // expect null
 
-	if (!svcaddr || !macaddr || !phys_ip || !virt_ip || extra_field_check) {
-		DOCA_LOG_ERR("Tunnel host requires 4 args: svc_ip,mac,pip,vip");
+	if (!svcaddr || !virt_ip || extra_field_check) {
+		DOCA_LOG_ERR("Tunnel host requires 2 args: svc_ip,vip");
 		return false;
 	}
-
 	if (inet_pton(AF_INET, svcaddr, &host->svc_ip) != 1) {
 		DOCA_LOG_ERR("Invalid svc IPv4 addr: %s", svcaddr);
-		return false;
-	}
-	if (rte_ether_unformat_addr(macaddr, &host->mac) != 0) {
-		DOCA_LOG_ERR("Invalid mac addr: %s", macaddr);
-		return false;
-	}
-	if (inet_pton(AF_INET6, phys_ip, host->pip) != 1) {
-		DOCA_LOG_ERR("Invalid physical IPv6 addr: %s", phys_ip);
 		return false;
 	}
 	if (inet_pton(AF_INET, virt_ip, &host->vip) != 1) {
@@ -183,6 +129,22 @@ static doca_error_t handle_benchmark_param(void *param, void *config)
 }
 
 /**
+ * @brief Indicates the application should create all PSP tunnels at startup
+ *
+ * @param [in]: A pointer to a boolean flag
+ * @config [in/out]: A void pointer to the application config struct
+ * @return: DOCA_SUCCESS on success; DOCA_ERROR otherwise
+ */
+static doca_error_t handle_static_tunnels_param(void *param, void *config)
+{
+	auto *app_config = (struct psp_gw_app_config *)config;
+	bool *bool_param = (bool *)param;
+	app_config->create_tunnels_at_startup = *bool_param;
+	DOCA_LOG_INFO("Create PSP tunnels at startup: %s", *bool_param ? "Enabled" : "Disabled");
+	return DOCA_SUCCESS;
+}
+
+/**
  * @brief Utility function to create a single argp parameter
  *
  * @short_name [in]: The single-letter command-line flag
@@ -233,25 +195,14 @@ static doca_error_t psp_gw_register_single_param(const char *short_name,
 	return DOCA_SUCCESS;
 }
 
-doca_error_t psp_gw_register_params(void)
+/**
+ * @brief Registers command-line arguments to the application.
+ *
+ * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+ */
+static doca_error_t psp_gw_register_params(void)
 {
 	doca_error_t result;
-
-	result = psp_gw_register_single_param("p",
-					      "pci-addr",
-					      "PCI address of Physical Function",
-					      handle_pci_addr_param,
-					      DOCA_ARGP_TYPE_STRING,
-					      true,
-					      false);
-
-	result = psp_gw_register_single_param("r",
-					      "representors",
-					      "Representor indices to attach; supported format: '#', '#,#', '#-#'",
-					      handle_repr_param,
-					      DOCA_ARGP_TYPE_STRING,
-					      false,
-					      false);
 
 	result = psp_gw_register_single_param("s",
 					      "svc-addr",
@@ -260,6 +211,8 @@ doca_error_t psp_gw_register_params(void)
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
 					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
 
 	result = psp_gw_register_single_param("t",
 					      "tunnel",
@@ -268,6 +221,8 @@ doca_error_t psp_gw_register_params(void)
 					      DOCA_ARGP_TYPE_STRING,
 					      false,
 					      true);
+	if (result != DOCA_SUCCESS)
+		return result;
 
 	result = psp_gw_register_single_param("c",
 					      "cookie",
@@ -276,6 +231,8 @@ doca_error_t psp_gw_register_params(void)
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
 
 	result = psp_gw_register_single_param("b",
 					      "benchmark",
@@ -284,6 +241,108 @@ doca_error_t psp_gw_register_params(void)
 					      DOCA_ARGP_TYPE_BOOLEAN,
 					      false,
 					      false);
+	if (result != DOCA_SUCCESS)
+		return result;
+
+	result = psp_gw_register_single_param("z",
+					      "static-tunnels",
+					      "Create tunnels at startup",
+					      handle_static_tunnels_param,
+					      DOCA_ARGP_TYPE_BOOLEAN,
+					      false,
+					      false);
+
+	return result;
+}
+
+static dev_pci_addr_devarg split_pci_devargs(std::string dev_params)
+{
+	// skip any -a prefix
+	size_t start = (dev_params[0] == '-' && dev_params[1] == 'a') ? 2 : 0;
+	for (size_t i = start; i < dev_params.size(); i++) {
+		if (dev_params[i] == ',') {
+			// split the params here and return
+			return {dev_params.substr(start, i - start), dev_params.substr(i + 1)};
+		}
+		// open_doca_device_with_pci() requires lowercase address characters
+		dev_params[i] = tolower(dev_params[i]);
+	}
+
+	// no comma found:
+	return {dev_params.substr(start), ""};
+}
+
+/**
+ * @brief Iterates through the program argv list, removing any which start with -a
+ * and returning them via the dev_allowlist_args output vector.
+ *
+ * @argc [in]: The number of args passed to main()
+ * @argv [in/out]: The args passed to main (input), with all -a args removed (output)
+ * @return: The list of arguments removed from argv in the form of
+ * pci_dbdf,devargs
+ */
+static std::vector<dev_pci_addr_devarg> psp_gw_separate_dev_allowlist_args(int argc, char *argv[])
+{
+	std::vector<dev_pci_addr_devarg> dev_allowlist_args;
+
+	bool next_is_pci_addr = false; // set whenever -a and the addr arg are separated by space
+	static char null_pci_devarg[] = "-a00:00.0";
+	static char null_pci_dev[] = "00:00.0";
+
+	for (int i = 0; i < argc; i++) {
+		if (next_is_pci_addr) {
+			// prev arg was -a by itself, now we need the device PCI addr
+			dev_allowlist_args.push_back(split_pci_devargs(argv[i]));
+			next_is_pci_addr = false;
+			argv[i] = null_pci_dev;
+		} else if (strncmp(argv[i], "-a", 2) == 0) {
+			next_is_pci_addr = strlen(argv[i]) == 2;
+			if (!next_is_pci_addr) {
+				dev_allowlist_args.push_back(split_pci_devargs(argv[i]));
+				argv[i] = null_pci_devarg;
+			}
+		}
+	}
+
+	return dev_allowlist_args;
+}
+
+doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_config)
+{
+	doca_error_t result;
+
+	// Init ARGP interface and start parsing cmdline/json arguments
+	result = doca_argp_init("doca_psp_gateway", app_config);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to init ARGP resources: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	result = psp_gw_register_params();
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to register ARGP parameters: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	doca_argp_set_dpdk_program(dpdk_init);
+
+	auto dev_allowlist_args = psp_gw_separate_dev_allowlist_args(argc, argv);
+	if (dev_allowlist_args.empty()) {
+		DOCA_LOG_ERR("One PCIe device must be specified via EAL arg -a");
+		return result;
+	}
+
+	app_config->pf_pcie_addr = dev_allowlist_args[0].first;
+	app_config->pf_repr_indices = dev_allowlist_args[0].second;
+	if (app_config->pf_repr_indices.empty())
+		app_config->pf_repr_indices = "representor=0";
+
+	result = doca_argp_start(argc, argv);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to parse application input: %s", doca_error_get_descr(result));
+		doca_argp_destroy();
+		return result;
+	}
 
 	return DOCA_SUCCESS;
 }

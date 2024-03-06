@@ -14,13 +14,21 @@
 #ifndef _PSP_GW_PARAMS_H_
 #define _PSP_GW_PARAMS_H_
 
+#include <string>
+#include <vector>
 #include <doca_error.h>
 
 /**
- * @brief Registers command-line arguments to the application.
+ * @brief Parses command-line arguments to the application.
+ * During processing of arguments, both DPDK and the application
+ * may remove arguments from argv, and argc will reflect the
+ * new size.
  *
+ * @argc [in/out]: The number of args passed to main()
+ * @argv [in/out]: The args passed to main
+ * @app_config [out]: The configuration of the application
  * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
  */
-doca_error_t psp_gw_register_params(void);
+doca_error_t psp_gw_argp_exec(int &argc, char *argv[], psp_gw_app_config *app_config);
 
 #endif /* _PSP_GW_PARAMS_H_ */
