@@ -61,79 +61,152 @@ sequenceDiagram
     end
 ```
 
-## DOCA Flow Pipes
+## DOCA Flow Pipes: Host-to-Net (H2N) Datapath
 
-WIP.
+### H2N Flow (No Sampling, Static Tunnel Assignment)
 
-### Net-to-Host (N2H) Datapath Flow
 ```mermaid
  %%{init:{'flowchart':{'useMaxWidth':false}}}%%
 flowchart LR
-    secure_ingress{{secure_ingress}}
-    secure_ingress-->ROOT
-    INGR_ACL[INGR_ACL]
-    RSS[[RSS]]
-    drop[[drop]]
+    ingress{{ingress}}
+    p0{{p0}}
+    EGR_ACL["EGR_ACL
+    M:ipv4.dst
+    A:encap(),
+    encrypt()"]
 
-    ROOT-->|"PORT=0,
-    IPV6,PSP"|PSP_DECRYPT
-    PSP_DECRYPT-->|+DECR|INGR_SAMP
-    INGR_SAMP-->|psp.S|INGR_ACL
-    INGR_SAMP-.->|miss|INGR_ACL
-    INGR_SAMP-->|MIRROR|RSS
-    INGR_ACL-->|SYND,IPV6/DECAP|pf0vf0.egress
-    INGR_ACL-.->|miss|drop
+    ingress-->ROOT
+    ROOT-->|"M:port=1,
+    ipv4"|EGR_ACL
+    EGR_ACL-->p0
+    EGR_ACL-.->|miss|DROP
 ```
 
-### N2H Exception Flow
-```mermaid
- %%{init:{'flowchart':{'useMaxWidth':false}}}%%
-flowchart LR
-    secure_ingress{{secure_ingress}}
-    kernel{{kernel}}
-
-    secure_ingress-->ROOT
-    ROOT-->|miss|kernel
-```
-### Host-to-Net (H2N) Datapath Flow
+### H2N Datapath Flow (Sampling Enabled)
 
 ```mermaid
  %%{init:{'flowchart':{'useMaxWidth':false}}}%%
 flowchart LR
-    secure_ingress{{secure_ingress}}
-    p0.secure_egress{{p0.secure_egress}}
-    PSP_ENCRYPT[PSP_ENCRYPT]
+    ingress{{ingress}}
+    p0{{p0}}
+    EGR_ACL["EGR_ACL
+    M:ipv4.dst
+    A:encap(),
+    pkt_meta=crypto_id"]
+    EGR_SAMP["EGR_SAMP
+    M:rand()=1
+    MM:0xffff
+    A:psp.S=1"]
+    PSP_ENCRYPT["PSP_ENCRYPT
+    M:pkt_meta
+    A:encrypt()"]
     RSS[[RSS]]
-    RSS2[[RSS]]
+    RSS2[["RSS Miss Handler
+    - RPC()
+    - add_entry()
+    "]]
 
-    secure_ingress-->ROOT
-    ROOT-->|PORT=1|EGR_ACL
-    EGR_ACL-->|"IPV4/
-    +ENCAP"|EGR_SAMP
-    EGR_SAMP-->|"RAND"|PSP_ENCRYPT
+    ingress-->ROOT
+    ROOT-->|"M:port=1,
+    ipv4"|EGR_ACL
+    EGR_ACL-->EGR_SAMP
+    EGR_SAMP-->PSP_ENCRYPT
     EGR_SAMP-.->|miss|PSP_ENCRYPT
-    EGR_SAMP-->|"MIRROR"|RSS
-    PSP_ENCRYPT-->|"PSP.CRYPTO_ID/
-    +ENCRYPT"|p0.secure_egress
-    EGR_ACL-.->|miss|RSS2-->|"add_entry,
-    Resubmit"|EGR_ACL
+    EGR_SAMP-->|"mirror"|RSS
+    PSP_ENCRYPT-->p0
+    EGR_ACL-.->|miss|RSS2-->|resubmit|EGR_ACL
 ```
 
 ### H2N Exception packets (ARP/DHCP):
 ```mermaid
  %%{init:{'flowchart':{'useMaxWidth':false}}}%%
 flowchart LR
-    secure_ingress{{secure_ingress}}
-    pf0vf0.egress{{pf0vf0.egress}}
-    RSS[[RSS]]
+    ingress{{ingress}}
+    pf0vf0{{pf0vf0}}
+    RSS[["RSS
+    - generate_reply()
+    "]]
 
-    secure_ingress-->ROOT
+    ingress-->ROOT
 
-    ROOT-->|"PORT=1,
-    [ARP,DHCP]"|RSS
-    RSS-->pf0vf0.egress
+    ROOT-->|"M:port=1,
+    [arp,dhcp]"|RSS
+    RSS-->pf0vf0
 ```
 
+## DOCA Flow Pipes: Net-to-Host (N2H) Datapath
+
+### N2H Datapath Flow (No Sampling)
+
+```mermaid
+ %%{init:{'flowchart':{'useMaxWidth':false}}}%%
+flowchart LR
+    ingress{{ingress}}
+    pf0vf0{{pf0vf0}}
+    ingress-->ROOT
+    INGR_ACL[INGR_ACL]
+    drop[[drop]]
+    PSP_DECRYPT["PSP_DECRYPT
+    A:decrypt()"]
+    INGR_ACL["INGR_ACL
+    M:synd,ipv6
+    A:decap()"]
+    SYND_STATS["SYND_STATS
+    M:psp.synd"]
+
+    ROOT-->|"M:port=0,
+    ipv6/psp"|PSP_DECRYPT
+    PSP_DECRYPT-->INGR_ACL
+    INGR_ACL--->pf0vf0
+    INGR_ACL-.->|miss|SYND_STATS
+    SYND_STATS-->drop
+```
+
+### n2H Datapath Flow (Sampling Enabled)
+
+```mermaid
+ %%{init:{'flowchart':{'useMaxWidth':false}}}%%
+flowchart LR
+    ingress{{ingress}}
+    pf0vf0{{pf0vf0}}
+    ingress-->ROOT
+    INGR_ACL[INGR_ACL]
+    RSS[[RSS]]
+    drop[[drop]]
+    PSP_DECRYPT["PSP_DECRYPT
+    A:decrypt()"]
+    INGR_SAMP["INGR_SAMP
+    M:psp.S=1"]
+    INGR_ACL["INGR_ACL
+    M:synd,ipv6
+    A:decap()"]
+    SYND_STATS["SYND_STATS
+    M:psp.synd"]
+
+    ROOT-->|"M:port=0,
+    ipv6/psp"|PSP_DECRYPT
+    PSP_DECRYPT-->INGR_SAMP
+    INGR_SAMP-->INGR_ACL
+    INGR_SAMP-.->|miss|INGR_ACL
+    INGR_SAMP-->|mirror|RSS
+    INGR_ACL--->pf0vf0
+    INGR_ACL-.->|miss|SYND_STATS
+    SYND_STATS-->drop
+```
+
+### N2H Exception Flow
+
+The `Isolated Mode` causes unmatched packets at the root pipe to be forwarded to the kernel.
+
+```mermaid
+ %%{init:{'flowchart':{'useMaxWidth':false}}}%%
+flowchart LR
+    ingress{{ingress}}
+    kernel{{kernel}}
+
+    ingress-->ROOT
+    ROOT-->|miss|kernel
+```
 
 ### Pipe Entry Scale Factors
 
