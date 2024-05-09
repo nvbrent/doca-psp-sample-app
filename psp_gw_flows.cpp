@@ -1289,17 +1289,18 @@ std::pair<uint64_t, uint64_t> PSP_GatewayFlows::perform_pipe_query(pipe_query *q
 void PSP_GatewayFlows::show_static_flow_counts(void)
 {
 	std::vector<pipe_query> queries;
-	queries.emplace_back(pipe_query{nullptr, default_rss_entry, "rss_pipe"});
-	queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_entry, "root_jump_to_ingress_entry"});
-	queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_entry, "root_jump_to_egress_entry"});
+	//queries.emplace_back(pipe_query{nullptr, default_rss_entry, "rss_pipe"});
+	//queries.emplace_back(pipe_query{nullptr, root_jump_to_ingress_entry, "root_jump_to_ingress_entry"});
+	//queries.emplace_back(pipe_query{nullptr, root_jump_to_egress_entry, "root_jump_to_egress_entry"});
 	queries.emplace_back(pipe_query{ingress_decrypt_pipe, default_decrypt_entry, "ingress_decrypt_pipe"});
-	queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
-	queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_entry, "ingress_acl_pipe"});
-	queries.emplace_back(pipe_query{nullptr, default_ingr_packet_spray_entry, "ingress_pkt_spray"});
+	//queries.emplace_back(pipe_query{ingress_sampling_pipe, default_ingr_sampling_entry, "ingress_sampling_pipe"});
+	//queries.emplace_back(pipe_query{ingress_acl_pipe, default_ingr_acl_entry, "ingress_acl_pipe"});
+	//queries.emplace_back(pipe_query{nullptr, default_ingr_packet_spray_entry, "ingress_pkt_spray"});
 
 	for (int i = 0; i < NUM_OF_PSP_SYNDROMES; i++) {
 		queries.emplace_back(
 			pipe_query{nullptr, syndrome_stats_entries[i], "syndrome[" + std::to_string(i) + "]"});
+		break;
 	}
 	if (false && app_config->enable_packet_spray) {
 		for (size_t i = 0; i < egr_packet_spray_entries.size(); i++) {
@@ -1308,10 +1309,10 @@ void PSP_GatewayFlows::show_static_flow_counts(void)
 							"egr_spray[" + std::to_string(i) + "]"});
 		}
 	}
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "egress_root"});
-	queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
-	queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
-	queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "empty_pipe_arp_entry"});
+	//queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "egress_root"});
+	//queries.emplace_back(pipe_query{egress_acl_pipe, nullptr, "egress_acl_pipe"});
+	//queries.emplace_back(pipe_query{egress_sampling_pipe, default_egr_sampling_entry, "egress_sampling_pipe"});
+	//queries.emplace_back(pipe_query{nullptr, empty_pipe_arp_entry, "empty_pipe_arp_entry"});
 
 	uint64_t total_pkts = 0;
 	for (auto &query : queries) {

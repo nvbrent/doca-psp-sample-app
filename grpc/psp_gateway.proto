@@ -50,6 +50,22 @@ message NewTunnelResponse
     TunnelParameters params = 2;
 }
 
+message UpdateTunnelRequest
+{
+    uint64 request_id = 1; // unique per host
+
+    // note src/dst are reversed from the original NewTunnelRequest
+    string virt_src_ip = 3;
+    string virt_dst_ip = 4;
+
+    TunnelParameters params = 5; // for traffic to requester
+}
+
+message UpdateTunnelResponse
+{
+    uint64 request_id = 1;
+}
+
 message KeyRotationRequest
 {
     uint64 request_id = 1; // unique per host
@@ -66,6 +82,10 @@ service PSP_Gateway
     // Requests that the recipient allocate a new SPI and encryption key
     // so that the initiator can begin sending encrypted traffic.
     rpc RequestTunnelParams(NewTunnelRequest) returns (NewTunnelResponse);
+
+    // Indicates that the SPI+Key previously sent will expire soon, and
+    // the given SPI+Key in the request should take its place.
+    rpc UpdateTunnelParams(UpdateTunnelRequest) returns (UpdateTunnelResponse);
 
     // Requests that the master key be rotated.
     // All active keys become deprecated but continue to work.

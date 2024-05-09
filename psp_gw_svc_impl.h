@@ -66,6 +66,10 @@ public:
 					   const ::psp_gateway::NewTunnelRequest *request,
 					   ::psp_gateway::NewTunnelResponse *response) override;
 
+	::grpc::Status UpdateTunnelParams(::grpc::ServerContext *context,
+					   const ::psp_gateway::UpdateTunnelRequest *request,
+					   ::psp_gateway::UpdateTunnelResponse *response) override;
+
 	/**
 	 * @brief Requests that the recipient rotate the PSP master key.
 	 *
