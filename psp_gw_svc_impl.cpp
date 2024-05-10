@@ -26,10 +26,6 @@
 
 DOCA_LOG_REGISTER(PSP_GW_SVC);
 
-bool enable_reverse_params = true;
-bool enable_crypto_id_recycling = true;
-bool enable_key_rotation = true;
-
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *psp_flows)
 	: config(config),
 	  psp_flows(psp_flows),
@@ -162,7 +158,7 @@ doca_error_t PSP_GatewayImpl::request_tunnel_to_host(struct psp_gw_host *remote_
 
 	// Save a round-trip, if a local virtual IP was given.
 	// Otherwise, expect the remote host to send a separate request.
-	if (enable_reverse_params && supply_reverse_params) {
+	if (supply_reverse_params) {
 		if (!local_virt_ip) {
 			DOCA_LOG_ERR("Cannot create reverse params without a local virt ip addr");
 			return DOCA_ERROR_INVALID_VALUE;
@@ -501,12 +497,10 @@ doca_error_t PSP_GatewayImpl::generate_tunnel_params(int psp_ver, psp_gateway::T
 
 	response->set_request_id(request->request_id());
 
-	if (enable_key_rotation) {
-		result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_WARN("Key Rotation Failed: %s", doca_error_get_descr(result));
-			return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
-		}
+	result = doca_flow_crypto_psp_master_key_rotate(pf->port_obj);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_WARN("Key Rotation Failed: %s", doca_error_get_descr(result));
+		return ::grpc::Status(::grpc::StatusCode::UNKNOWN, "Key Rotation Failed");
 	}
 
 	if (request->issue_new_keys()) {
@@ -569,8 +563,6 @@ uint32_t PSP_GatewayImpl::allocate_crypto_id(void)
 
 void PSP_GatewayImpl::release_crypto_id(uint32_t crypto_id)
 {
-	if (!enable_crypto_id_recycling) return;
-
 	if (available_crypto_ids.find(crypto_id) != available_crypto_ids.end()) {
 		DOCA_LOG_WARN("Crypto ID %d already released", crypto_id);
 	}
