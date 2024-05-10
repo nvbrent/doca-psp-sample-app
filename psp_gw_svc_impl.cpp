@@ -26,9 +26,9 @@
 
 DOCA_LOG_REGISTER(PSP_GW_SVC);
 
-bool enable_reverse_params = false;
+bool enable_reverse_params = true;
 bool enable_crypto_id_recycling = true;
-bool enable_key_rotation = false;
+bool enable_key_rotation = true;
 
 PSP_GatewayImpl::PSP_GatewayImpl(psp_gw_app_config *config, PSP_GatewayFlows *psp_flows)
 	: config(config),
@@ -95,13 +95,7 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 				     ipv4_to_string(psp_session->dst_vip).c_str());
 			return DOCA_ERROR_NOT_FOUND;
 		}
-#if 0
-		doca_error_t result = request_tunnel_to_host(remote_host, config->local_vf_addr_raw, true, true);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to update session %s", ipv4_to_string(psp_session->dst_vip).c_str());
-			return result;
-		}
-#else
+
 		std::string remote_host_svc_pip = ipv4_to_string(remote_host->svc_ip);
 		auto *stub = get_stub(remote_host_svc_pip);
 
@@ -110,7 +104,7 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 		::psp_gateway::UpdateTunnelResponse response;
 		request.set_request_id(++next_request_id);
 		// Note the src/dst are reversed from RequestTunnelParams()
-		request.set_virt_src_ip(ipv4_to_string(config->local_vf_addr_raw));
+		request.set_virt_src_ip(config->local_vf_addr);
 		request.set_virt_dst_ip(ipv4_to_string(psp_session->src_vip));
 		doca_error_t result =
 			generate_tunnel_params((int)config->net_config.default_psp_proto_ver, request.mutable_params());
@@ -144,7 +138,6 @@ doca_error_t PSP_GatewayImpl::update_current_sessions()
 				      request.virt_src_ip().c_str(),
 				      psp_session->spi_ingress);
 		}
-#endif
 	}
 	return DOCA_SUCCESS;
 }
@@ -250,10 +243,6 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 	DOCA_LOG_INFO("Received tunnel params from %s, SPI 0x%x", remote_host_svc_ip.c_str(), params.spi());
 	debug_key("Received", encrypt_key, params.encryption_key().size());
 
-	std::string bad_key = params.encryption_key();
-	for (uint32_t i=0; i<key_len_bytes; i++)
-		bad_key.at(i) ^= 1;
-
 	// If there is an existing session, we should update it instead of making a new one
 	auto existing_session = sessions.find(remote_host_vip);
 	if (existing_session != sessions.end() && existing_session->second.encap_encrypt_entry) {
@@ -294,7 +283,7 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
-	result = psp_flows->add_encrypt_entry(&session, bad_key.data());
+	result = psp_flows->add_encrypt_entry(&session, encrypt_key);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Failed to create session from %s request %ld: %s",
 			     remote_host_svc_ip.c_str(),
@@ -304,48 +293,6 @@ doca_error_t PSP_GatewayImpl::create_tunnel_flow(const struct psp_gw_host *remot
 		sessions.erase(remote_host_vip);
 		return result;
 	}
-
-	uint32_t old_crypto_id = session.crypto_id;
-	crypto_id = allocate_crypto_id();
-	if (crypto_id == UINT32_MAX) {
-		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
-		return DOCA_ERROR_NO_MEMORY;
-	}
-
-	session.crypto_id = crypto_id;
-	result = psp_flows->update_encrypt_entry(&session, bad_key.data());
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to re-create session from %s request %ld: %s",
-			     remote_host_svc_ip.c_str(),
-			     request_id,
-			     doca_error_get_descr(result));
-		release_crypto_id(crypto_id);
-		sessions.erase(remote_host_vip);
-		return result;
-	}
-
-	release_crypto_id(old_crypto_id);
-
-	old_crypto_id = session.crypto_id;
-	crypto_id = allocate_crypto_id();
-	if (crypto_id == UINT32_MAX) {
-		DOCA_LOG_ERR("Exhausted available crypto_ids; cannot complete new tunnel");
-		return DOCA_ERROR_NO_MEMORY;
-	}
-
-	session.crypto_id = crypto_id;
-	result = psp_flows->update_encrypt_entry(&session, encrypt_key);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to re-create session from %s request %ld: %s",
-			     remote_host_svc_ip.c_str(),
-			     request_id,
-			     doca_error_get_descr(result));
-		release_crypto_id(crypto_id);
-		sessions.erase(remote_host_vip);
-		return result;
-	}
-
-	release_crypto_id(old_crypto_id);
 
 	return DOCA_SUCCESS;
 }
