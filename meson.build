@@ -51,7 +51,6 @@ app_inc_dirs = [include_directories(common_dir_path, doca_root_dir)]
 
 app_srcs = files([
 	APP_NAME + '.cpp',
-	'psp_gw_bench.cpp',
 	'psp_gw_flows.cpp',
 	'psp_gw_params.cpp',
 	'psp_gw_svc_impl.cpp',

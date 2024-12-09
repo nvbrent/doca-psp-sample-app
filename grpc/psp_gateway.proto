@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -31,23 +43,29 @@ message TunnelParameters
     uint32 spi = 4;
     bytes encryption_key = 5;
     uint64 virt_cookie = 6;
+    uint32 encap_type = 7;
 }
 
-message NewTunnelRequest
+message SingleTunnelRequest
+{
+    string virt_src_ip = 1;
+    string virt_dst_ip = 2;
+
+    TunnelParameters reverse_params = 3;
+}
+
+message MultiTunnelRequest
 {
     uint64 request_id = 1; // unique per host
+
     repeated uint32 psp_versions_accepted = 2; // in decreasing order of preference
-
-    string virt_src_ip = 3;
-    string virt_dst_ip = 4;
-
-    TunnelParameters reverse_params = 5; // for traffic coming back to requester
+    repeated SingleTunnelRequest tunnels = 3;
 }
 
-message NewTunnelResponse
+message MultiTunnelResponse
 {
     uint64 request_id = 1;
-    TunnelParameters params = 2;
+    repeated TunnelParameters tunnels_params = 2;
 }
 
 message KeyRotationRequest
@@ -63,9 +81,9 @@ message KeyRotationResponse
 
 service PSP_Gateway
 {
-    // Requests that the recipient allocate a new SPI and encryption key
+    // Requests that the recipient allocate multiple SPI and encryption key pairs
     // so that the initiator can begin sending encrypted traffic.
-    rpc RequestTunnelParams(NewTunnelRequest) returns (NewTunnelResponse);
+    rpc RequestMultipleTunnelParams(MultiTunnelRequest) returns (MultiTunnelResponse);
 
     // Requests that the master key be rotated.
     // All active keys become deprecated but continue to work.

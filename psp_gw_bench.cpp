@@ -40,11 +40,13 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 	std::vector<psp_session_t> sessions;
 	sessions.reserve(loops);
 
-	struct psp_session_t session = {
-		.dst_mac = {{0x11, 0x12, 0x13, 0x14, 0x15, 0x16}},
-		.dst_pip =
-			{0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f},
-	};
+	struct psp_session_t session = {};
+
+	session.dst_mac = {{0x11, 0x12, 0x13, 0x14, 0x15, 0x16}};
+	doca_be32_t ipv6_addr[4] = {0x20010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f};
+	memcpy(&session.dst_pip.ipv6_addr, &ipv6_addr, sizeof(ipv6_addr) * sizeof(*ipv6_addr));
+	session.dst_pip.type = DOCA_FLOW_L3_TYPE_IP6;
+
 	uint32_t encrypt_key[256 / 32] = {};
 
 	doca_error_t result = DOCA_SUCCESS;
@@ -57,7 +59,7 @@ static doca_error_t execute_psp_flow_create_loop(size_t loops, PSP_GatewayFlows 
 		session.dst_vip = RTE_BE32(i + 0xA0A0B000);
 		session.crypto_id = i + 1;
 		session.vc = 0x8000000000000000 + (i << 32) + i;
-		result = psp_flows->add_encrypt_entry(&session, encrypt_key);
+		result = psp_flows->config_encrypt_entry(&session, encrypt_key);
 
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("PSP Encrypt Flow creation failed: %s", doca_error_get_descr(result));

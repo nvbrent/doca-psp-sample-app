@@ -5,3 +5,7 @@
 doca_geneve_demo
 
 build/
+.vscode
+__pycache__
+*.pyi
+*.pyc

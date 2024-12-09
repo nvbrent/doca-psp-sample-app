@@ -1,0 +1,25 @@
+{
+    "config": {},
+    "hosts": [
+        {
+            "hostname": "doca-vr-066",
+            "pci": "0000:8a:00.0",
+            "repr": "pf0vf0",
+            "pip": "fe80::966d:aeff:feaf:3fcc",
+            "grpc-address": "10.137.189.66",
+            "vips": [
+                "60.0.0.66"
+            ]
+        },
+        {
+            "hostname": "doca-vr-069",
+            "pci": "0000:8a:00.0",
+            "repr": "pf0vf0",
+            "pip": "fe80::966d:aeff:fea9:b0b0",
+            "grpc-address": "10.137.189.69",
+            "vips": [
+                "60.0.0.69"
+            ]
+        }
+    ]
+}

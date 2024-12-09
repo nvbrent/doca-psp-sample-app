@@ -1,13 +1,25 @@
 /*
- * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+ * Copyright (c) 2024 NVIDIA CORPORATION AND AFFILIATES.  All rights reserved.
  *
- * This software product is a proprietary product of NVIDIA CORPORATION &
- * AFFILIATES (the "Company") and all right, title, and interest in and to the
- * software product, including all associated intellectual property rights, are
- * and shall remain exclusively with the Company.
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright notice, this list of
+ *       conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright notice, this list of
+ *       conditions and the following disclaimer in the documentation and/or other materials
+ *       provided with the distribution.
+ *     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+ *       to endorse or promote products derived from this software without specific prior written
+ *       permission.
  *
- * This software product is governed by the End User License Agreement
- * provided with the software product.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -25,7 +37,7 @@ std::string ipv4_to_string(rte_be32_t ipv4_addr)
 	return addr_str;
 }
 
-std::string ipv6_to_string(const uint8_t ipv6_addr[])
+std::string ipv6_to_string(const uint32_t ipv6_addr[])
 {
 	std::string addr_str(INET6_ADDRSTRLEN, '\0');
 	inet_ntop(AF_INET6, ipv6_addr, addr_str.data(), INET6_ADDRSTRLEN);
@@ -39,4 +51,29 @@ std::string mac_to_string(const rte_ether_addr &mac_addr)
 	rte_ether_format_addr(addr_str.data(), RTE_ETHER_ADDR_FMT_SIZE, &mac_addr);
 	addr_str.resize(strlen(addr_str.c_str()));
 	return addr_str;
+}
+
+bool is_empty_mac_addr(const rte_ether_addr &addr)
+{
+	rte_ether_addr empty_ether_addr = {};
+	return !memcmp(empty_ether_addr.addr_bytes, addr.addr_bytes, RTE_ETHER_ADDR_LEN);
+}
+
+uint32_t psp_version_to_key_length_bits(uint32_t psp_proto_ver)
+{
+    return (psp_proto_ver == 0 || psp_proto_ver == 2) ? 128 : 256;
+}
+
+void print_nic(std::string prefix, psp_gw_nic_desc_t nic)
+{
+	std::string out = prefix + " NIC: \n";
+	out += "\thostname: " + nic.hostname + "\n";
+	out += "\tpci: " + nic.pci + "\n";
+	out += "\trepr: " + nic.repr + "\n";
+	out += "\tsvc_ip: " + ipv4_to_string(nic.svc_ip) + "\n";
+	out += "\tpip: " + nic.pip + "\n";
+	for (auto vip : nic.vips) {
+		out += "\tvip: " + vip + "\n";
+	}
+	printf("%s", out.c_str());
 }
